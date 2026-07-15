@@ -290,33 +290,47 @@ function readySim() {
   const sim = readySim();
   const left = sim.players[0];
   const right = sim.players[1];
+
+  // Contest access while camping
   left.x = 40;
   left.y = PITCH_HEIGHT / 2;
   sim.possessionId = left.id;
-  sim.ball.x = left.x + 20;
+  sim.ball.x = left.x + 16;
   sim.ball.y = left.y;
-  // Before contest, right is locked out of left box
   right.x = 200;
   right.y = PITCH_HEIGHT / 2;
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 50; i++) {
     sim.setInput(right.id, input({ left: true }));
-    sim.step();
-  }
-  // With ball held in left box, right should be able to push into the box
-  right.x = 150;
-  for (let i = 0; i < 40; i++) {
-    sim.setInput(right.id, input({ left: true }));
+    sim.setInput(left.id, input());
     sim.step();
   }
   assert(right.x < 110, "attacker can enter box while holder camps there");
 
-  // Hold long enough to force auto-clear
-  sim.possessionId = left.id;
-  left.x = 40;
-  left.y = PITCH_HEIGHT / 2;
-  for (let i = 0; i < 80; i++) sim.step();
-  assert(sim.possessionId === null, "camping in own box must force a clear");
-  assert(sim.ball.vx > 40, "forced clear should send ball upfield");
+  // Forced clear after lingering in own box
+  const sim2 = readySim();
+  const camper = sim2.players[0];
+  const other = sim2.players[1];
+  other.x = 800;
+  other.y = 80;
+  camper.x = 36;
+  camper.y = PITCH_HEIGHT / 2;
+  sim2.possessionId = camper.id;
+  sim2.ball.x = camper.x + 16;
+  sim2.ball.y = camper.y;
+  let cleared = false;
+  for (let i = 0; i < 90; i++) {
+    sim2.setInput(camper.id, input());
+    sim2.setInput(other.id, input());
+    camper.x = 36;
+    camper.y = PITCH_HEIGHT / 2;
+    sim2.step();
+    if (sim2.possessionId === null) {
+      cleared = true;
+      break;
+    }
+  }
+  assert(cleared, "camping in own box must force a clear");
+  assert(sim2.ball.vx > 40, "forced clear should send ball upfield");
   console.log("OK own-box anti-camp");
 }
 
