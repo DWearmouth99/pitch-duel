@@ -984,7 +984,17 @@ export class GameSim {
   }
 
   private checkMatchEnd(): void {
-    if (this.timeLeftMs > 0 || this.phase !== "play") return;
+    if (this.phase !== "play") return;
+
+    // Mercy rule: 5-goal lead ends the match immediately
+    if (Math.abs(this.score.left - this.score.right) >= 5) {
+      this.finished = true;
+      this.banner = "MERCY RULE!";
+      this.bannerTimer = 1.6;
+      return;
+    }
+
+    if (this.timeLeftMs > 0) return;
     if (this.score.left === this.score.right) {
       this.beginPenalties();
     } else {

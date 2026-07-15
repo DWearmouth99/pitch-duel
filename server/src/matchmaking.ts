@@ -2,13 +2,18 @@ import type WebSocket from "ws";
 import { v4 as uuidv4 } from "uuid";
 import { rankingStore } from "./ranking.js";
 import { GameRoom, type RoomPlayer } from "./game/room.js";
+import { aiOpponentFor } from "./game/ai.js";
 import type { ClientMessage, ServerMessage } from "./shared/protocol.js";
+
+/** Wait this long alone in queue before matching an AI. */
+const AI_FALLBACK_MS = 5_000;
 
 interface QueuedPlayer {
   id: string;
   name: string;
   elo: number;
   ws: WebSocket;
+  aiTimer: ReturnType<typeof setTimeout> | null;
 }
 
 function send(ws: WebSocket, msg: ServerMessage): void {
@@ -82,7 +87,6 @@ export class Matchmaking {
       return;
     }
 
-    // Already in a match?
     const existingRoom = this.playerToRoom.get(playerId);
     if (existingRoom) {
       if (this.rooms.has(existingRoom)) {
@@ -92,12 +96,10 @@ export class Matchmaking {
       this.playerToRoom.delete(playerId);
     }
 
-    // Already queued?
     if (this.queue.some((q) => q.id === playerId)) {
       return;
     }
 
-    // Prevent same account twice in queue
     if (
       this.queue.some(
         (q) => q.name.toLowerCase() === profile.name.toLowerCase()
@@ -110,12 +112,15 @@ export class Matchmaking {
       return;
     }
 
-    this.queue.push({
+    const entry: QueuedPlayer = {
       id: playerId,
       name: profile.name,
       elo: profile.elo,
       ws,
-    });
+      aiTimer: null,
+    };
+
+    this.queue.push(entry);
 
     send(ws, {
       type: "queueJoined",
@@ -124,9 +129,25 @@ export class Matchmaking {
     });
 
     this.tryMatch();
+
+    // If still alone after the wait, fight an AI of similar rank
+    if (this.queue.some((q) => q.id === playerId)) {
+      entry.aiTimer = setTimeout(() => {
+        this.matchWithAi(playerId);
+      }, AI_FALLBACK_MS);
+    }
+  }
+
+  private clearAiTimer(entry: QueuedPlayer): void {
+    if (entry.aiTimer) {
+      clearTimeout(entry.aiTimer);
+      entry.aiTimer = null;
+    }
   }
 
   private leaveQueue(playerId: string): void {
+    const entry = this.queue.find((q) => q.id === playerId);
+    if (entry) this.clearAiTimer(entry);
     this.queue = this.queue.filter((q) => q.id !== playerId);
   }
 
@@ -134,31 +155,78 @@ export class Matchmaking {
     while (this.queue.length >= 2) {
       const a = this.queue.shift()!;
       const b = this.queue.shift()!;
-
-      // Prefer higher ELO difference randomization for fairness — FIFO as planned
-      const left: RoomPlayer = {
-        id: a.id,
-        name: a.name,
-        side: "left",
-        ws: a.ws,
-        elo: a.elo,
-      };
-      const right: RoomPlayer = {
-        id: b.id,
-        name: b.name,
-        side: "right",
-        ws: b.ws,
-        elo: b.elo,
-      };
-
-      const room = new GameRoom(left, right, (roomId) => {
-        this.rooms.delete(roomId);
-      });
-
-      this.rooms.set(room.id, room);
-      this.playerToRoom.set(a.id, room.id);
-      this.playerToRoom.set(b.id, room.id);
+      this.clearAiTimer(a);
+      this.clearAiTimer(b);
+      this.startRoom(a, b);
     }
+  }
+
+  private matchWithAi(playerId: string): void {
+    const idx = this.queue.findIndex((q) => q.id === playerId);
+    if (idx < 0) return;
+    // Someone else may have joined — prefer human
+    if (this.queue.length >= 2) {
+      this.tryMatch();
+      return;
+    }
+
+    const human = this.queue.splice(idx, 1)[0];
+    this.clearAiTimer(human);
+
+    const aiInfo = aiOpponentFor(human.elo);
+    const humanSide = Math.random() < 0.5 ? "left" : "right";
+    const aiSide = humanSide === "left" ? "right" : "left";
+
+    const humanPlayer: RoomPlayer = {
+      id: human.id,
+      name: human.name,
+      side: humanSide,
+      ws: human.ws,
+      elo: human.elo,
+    };
+    const aiPlayer: RoomPlayer = {
+      id: uuidv4(),
+      name: aiInfo.name,
+      side: aiSide,
+      ws: null,
+      elo: aiInfo.elo,
+      isAi: true,
+    };
+
+    const left = humanSide === "left" ? humanPlayer : aiPlayer;
+    const right = humanSide === "left" ? aiPlayer : humanPlayer;
+
+    const room = new GameRoom(left, right, (roomId) => {
+      this.rooms.delete(roomId);
+    });
+
+    this.rooms.set(room.id, room);
+    this.playerToRoom.set(human.id, room.id);
+  }
+
+  private startRoom(a: QueuedPlayer, b: QueuedPlayer): void {
+    const left: RoomPlayer = {
+      id: a.id,
+      name: a.name,
+      side: "left",
+      ws: a.ws,
+      elo: a.elo,
+    };
+    const right: RoomPlayer = {
+      id: b.id,
+      name: b.name,
+      side: "right",
+      ws: b.ws,
+      elo: b.elo,
+    };
+
+    const room = new GameRoom(left, right, (roomId) => {
+      this.rooms.delete(roomId);
+    });
+
+    this.rooms.set(room.id, room);
+    this.playerToRoom.set(a.id, room.id);
+    this.playerToRoom.set(b.id, room.id);
   }
 
   private handleDisconnect(ws: WebSocket, playerId: string): void {

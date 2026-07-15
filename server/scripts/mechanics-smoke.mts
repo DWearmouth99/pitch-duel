@@ -274,6 +274,17 @@ function readySim() {
   console.log("OK penalty standing save");
 }
 
+// --- Mercy rule ends at +5 goals ---
+{
+  const sim = readySim();
+  sim.score.left = 5;
+  sim.score.right = 0;
+  sim.step();
+  assert(sim.finished, "5-goal lead should end the match");
+  assert(sim.getWinner() === "left", "leader wins on mercy");
+  console.log("OK mercy rule");
+}
+
 // --- Slide faces move direction ---
 {
   const sim = readySim();

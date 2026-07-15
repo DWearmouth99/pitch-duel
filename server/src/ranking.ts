@@ -265,6 +265,38 @@ export class RankingStore {
       right: { ...publicProfile(right), delta: deltaRight },
     };
   }
+
+  /**
+   * Update a human player's ELO after a match vs AI (AI is not stored).
+   */
+  applyVsAi(
+    humanName: string,
+    aiElo: number,
+    outcome: "win" | "loss" | "draw"
+  ): PlayerProfile & { delta: number } {
+    const key = keyFor(humanName);
+    const human = this.db.players[key];
+    if (!human) throw new Error("Account not found");
+
+    const expected =
+      1 / (1 + Math.pow(10, (aiElo - human.elo) / 400));
+    let score = 0.5;
+    if (outcome === "win") {
+      score = 1;
+      human.wins += 1;
+    } else if (outcome === "loss") {
+      score = 0;
+      human.losses += 1;
+    } else {
+      human.draws += 1;
+    }
+
+    const delta = Math.round(K_FACTOR * (score - expected));
+    human.elo = Math.max(100, human.elo + delta);
+    this.db.players[key] = human;
+    this.save();
+    return { ...publicProfile(human), delta };
+  }
 }
 
 export const rankingStore = new RankingStore();

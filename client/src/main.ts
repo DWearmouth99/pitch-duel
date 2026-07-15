@@ -42,7 +42,7 @@ function startMatchRendering(side: Side): void {
     const sample = input.sample();
     gameSocket.sendInput(sample);
     renderer?.setLocalAim(sample.aimX, sample.aimY, sample.charge);
-  }, 1000 / 30);
+  }, 1000 / 40);
 }
 
 function stopMatchRendering(): void {

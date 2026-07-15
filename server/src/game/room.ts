@@ -8,18 +8,24 @@ import {
   type Side,
 } from "../shared/protocol.js";
 import { GameSim } from "./sim.js";
+import { AiController } from "./ai.js";
 import { rankingStore } from "../ranking.js";
 
 export interface RoomPlayer {
   id: string;
   name: string;
   side: Side;
-  ws: WebSocket;
+  /** null for AI opponents */
+  ws: WebSocket | null;
   elo: number;
+  isAi?: boolean;
 }
 
-function send(ws: WebSocket, msg: ServerMessage): void {
-  if (ws.readyState === ws.OPEN) {
+/** Simulate at 60Hz, broadcast ~20Hz to cut bandwidth / lag on hosted deploys. */
+const SNAPSHOT_EVERY = 3;
+
+function send(ws: WebSocket | null, msg: ServerMessage): void {
+  if (ws && ws.readyState === ws.OPEN) {
     ws.send(JSON.stringify(msg));
   }
 }
@@ -31,6 +37,10 @@ export class GameRoom {
   private interval: ReturnType<typeof setInterval> | null = null;
   private ended = false;
   private onEmpty: (roomId: string) => void;
+  private ai: AiController | null = null;
+  private tickCount = 0;
+  private lastSentPhase = "";
+  private lastSentScore = { left: -1, right: -1 };
 
   constructor(
     left: RoomPlayer,
@@ -46,7 +56,16 @@ export class GameRoom {
       { id: right.id, name: right.name }
     );
 
+    const aiPlayer = left.isAi ? left : right.isAi ? right : null;
+    if (aiPlayer) {
+      this.ai = new AiController(
+        aiPlayer.id,
+        Math.max(0, Math.min(1, (aiPlayer.elo - 750) / 1650))
+      );
+    }
+
     for (const p of [left, right]) {
+      if (!p.ws) continue;
       const opp = p.side === "left" ? right : left;
       send(p.ws, {
         type: "matchFound",
@@ -82,12 +101,31 @@ export class GameRoom {
     };
   }
 
+  private shouldBroadcast(): boolean {
+    this.tickCount += 1;
+    const scoreChanged =
+      this.sim.score.left !== this.lastSentScore.left ||
+      this.sim.score.right !== this.lastSentScore.right;
+    const phaseChanged = this.sim.phase !== this.lastSentPhase;
+    const due = this.tickCount % SNAPSHOT_EVERY === 0;
+    if (scoreChanged || phaseChanged || due || this.sim.finished) {
+      this.lastSentScore = { ...this.sim.score };
+      this.lastSentPhase = this.sim.phase;
+      return true;
+    }
+    return false;
+  }
+
   private tick(): void {
     if (this.ended) return;
+    this.ai?.update(this.sim);
     this.sim.step();
 
-    for (const p of this.players.values()) {
-      send(p.ws, this.buildSnapshot(p.side));
+    if (this.shouldBroadcast()) {
+      for (const p of this.players.values()) {
+        if (!p.ws) continue;
+        send(p.ws, this.buildSnapshot(p.side));
+      }
     }
 
     if (this.sim.finished) {
@@ -96,6 +134,8 @@ export class GameRoom {
   }
 
   handleInput(playerId: string, input: PlayerInput): void {
+    const p = this.players.get(playerId);
+    if (!p || p.isAi) return;
     this.sim.setInput(playerId, input);
   }
 
@@ -105,57 +145,89 @@ export class GameRoom {
     this.players.delete(playerId);
 
     if (this.ended) {
-      if (this.players.size === 0) this.cleanup();
+      if (this.humanCount() === 0) this.cleanup();
+      return;
+    }
+
+    // Human left an AI match → award win to the leaver's opponent (AI), human loses
+    const remaining = [...this.players.values()][0];
+    if (disconnected.isAi) {
+      // Shouldn't happen
+      this.cleanup();
       return;
     }
 
     this.ended = true;
     this.stopInterval();
 
-    const remaining = [...this.players.values()][0];
-    if (remaining) {
-      const winnerSide = remaining.side;
-      const leftName =
-        remaining.side === "left" ? remaining.name : disconnected.name;
-      const rightName =
-        remaining.side === "right" ? remaining.name : disconnected.name;
-
-      const result = rankingStore.applyMatchResult(
-        leftName,
-        rightName,
-        winnerSide
-      );
-
-      send(remaining.ws, {
-        type: "opponentDisconnected",
-        score: { ...this.sim.score },
-      });
-
-      const youResult =
-        remaining.side === "left" ? result.left : result.right;
-      const oppResult =
-        remaining.side === "left" ? result.right : result.left;
-
-      send(remaining.ws, {
-        type: "matchEnd",
-        score: { ...this.sim.score },
-        penaltyScore: this.sim.getPenaltyScore(),
-        winner: winnerSide,
-        decidedByPens: this.sim.wasDecidedByPens(),
-        you: {
-          name: youResult.name,
-          elo: youResult.elo,
-          delta: youResult.delta,
-        },
-        opponent: {
-          name: oppResult.name,
-          elo: oppResult.elo,
-          delta: oppResult.delta,
-        },
-      });
+    if (!remaining) {
+      this.cleanup();
+      return;
     }
 
+    if (remaining.isAi) {
+      // Human disconnected vs AI → loss
+      try {
+        const you = rankingStore.applyVsAi(
+          disconnected.name,
+          remaining.elo,
+          "loss"
+        );
+        // Can't notify disconnected client reliably
+        void you;
+      } catch {
+        /* ignore */
+      }
+      this.cleanup();
+      return;
+    }
+
+    // PvP: remaining human wins
+    const winnerSide = remaining.side;
+    const leftName =
+      remaining.side === "left" ? remaining.name : disconnected.name;
+    const rightName =
+      remaining.side === "right" ? remaining.name : disconnected.name;
+
+    const result = rankingStore.applyMatchResult(
+      leftName,
+      rightName,
+      winnerSide
+    );
+
+    send(remaining.ws, {
+      type: "opponentDisconnected",
+      score: { ...this.sim.score },
+    });
+
+    const youResult = remaining.side === "left" ? result.left : result.right;
+    const oppResult = remaining.side === "left" ? result.right : result.left;
+
+    send(remaining.ws, {
+      type: "matchEnd",
+      score: { ...this.sim.score },
+      penaltyScore: this.sim.getPenaltyScore(),
+      winner: winnerSide,
+      decidedByPens: this.sim.wasDecidedByPens(),
+      you: {
+        name: youResult.name,
+        elo: youResult.elo,
+        delta: youResult.delta,
+      },
+      opponent: {
+        name: oppResult.name,
+        elo: oppResult.elo,
+        delta: oppResult.delta,
+      },
+    });
+
     this.cleanup();
+  }
+
+  private humanCount(): number {
+    let n = 0;
+    for (const p of this.players.values()) if (!p.isAi) n += 1;
+    return n;
   }
 
   private finishMatch(): void {
@@ -171,14 +243,35 @@ export class GameRoom {
       return;
     }
 
+    const penaltyScore = this.sim.getPenaltyScore();
+    const decidedByPens = this.sim.wasDecidedByPens();
+
+    if (left.isAi || right.isAi) {
+      const human = left.isAi ? right : left;
+      const ai = left.isAi ? left : right;
+      let outcome: "win" | "loss" | "draw" = "draw";
+      if (winner === human.side) outcome = "win";
+      else if (winner === ai.side) outcome = "loss";
+
+      const you = rankingStore.applyVsAi(human.name, ai.elo, outcome);
+      send(human.ws, {
+        type: "matchEnd",
+        score: { ...this.sim.score },
+        penaltyScore,
+        winner,
+        decidedByPens,
+        you: { name: you.name, elo: you.elo, delta: you.delta },
+        opponent: { name: ai.name, elo: ai.elo, delta: -you.delta },
+      });
+      setTimeout(() => this.cleanup(), 500);
+      return;
+    }
+
     const result = rankingStore.applyMatchResult(
       left.name,
       right.name,
       winner
     );
-
-    const penaltyScore = this.sim.getPenaltyScore();
-    const decidedByPens = this.sim.wasDecidedByPens();
 
     for (const p of this.players.values()) {
       const you = p.side === "left" ? result.left : result.right;
@@ -199,7 +292,7 @@ export class GameRoom {
 
   removePlayer(playerId: string): void {
     this.players.delete(playerId);
-    if (this.players.size === 0) this.cleanup();
+    if (this.humanCount() === 0) this.cleanup();
   }
 
   private stopInterval(): void {

@@ -13,7 +13,7 @@ import {
   type Side,
 } from "../shared/protocol";
 
-const INTERP_DELAY_MS = 50;
+const INTERP_DELAY_MS = 90;
 
 const EMOTE_LABEL: Record<Exclude<EmoteId, null>, string> = {
   cheer: "🎉",

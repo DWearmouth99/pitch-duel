@@ -428,7 +428,7 @@ export class UI {
   setQueueElo(elo: number, name: string): void {
     (
       this.root.querySelector("#queue-status") as HTMLElement
-    ).textContent = `Searching for an opponent as ${name}…`;
+    ).textContent = `Searching for an opponent as ${name}… AI joins if no one queues.`;
     const wrap = this.root.querySelector("#queue-rank") as HTMLElement;
     wrap.innerHTML = renderRankChip(rankProgress(elo));
   }
