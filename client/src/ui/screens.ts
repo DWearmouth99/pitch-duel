@@ -1,5 +1,6 @@
 import type { GameSocket } from "../net/socket";
 import type { LeaderboardEntry, Side } from "../shared/protocol";
+import { apiUrl } from "../config";
 import {
   DIVISIONS,
   divisionForElo,
@@ -559,7 +560,7 @@ export class UI {
     const body = this.root.querySelector("#lb-body") as HTMLElement;
     body.innerHTML = `<tr><td colspan="5">Loading…</td></tr>`;
     try {
-      const res = await fetch("/api/leaderboard?limit=20");
+      const res = await fetch(apiUrl("/api/leaderboard?limit=20"));
       const data = (await res.json()) as {
         entries: (LeaderboardEntry & { divisionLabel?: string })[];
       };

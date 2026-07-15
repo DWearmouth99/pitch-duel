@@ -1,11 +1,7 @@
 import type { ClientMessage, PlayerInput, ServerMessage } from "../shared/protocol";
+import { wsUrl } from "../config";
 
 type MessageHandler = (msg: ServerMessage) => void;
-
-function wsUrl(): string {
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${location.host}/ws`;
-}
 
 export class GameSocket {
   private ws: WebSocket | null = null;

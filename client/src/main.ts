@@ -1,4 +1,5 @@
 import "./styles.css";
+import { apiUrl } from "./config";
 import { gameSocket } from "./net/socket";
 import { InputController } from "./game/input";
 import { PitchRenderer } from "./game/renderer";
@@ -24,7 +25,7 @@ async function ensureConnected(): Promise<boolean> {
     }
     return true;
   } catch {
-    ui.setPlayError("Cannot reach server. Is it running on port 3001?");
+    ui.setPlayError("Cannot reach game server.");
     return false;
   }
 }
@@ -67,7 +68,7 @@ async function refreshSession(): Promise<boolean> {
     return false;
   }
   try {
-    const res = await fetch(`/api/me?token=${encodeURIComponent(token)}`);
+    const res = await fetch(apiUrl(`/api/me?token=${encodeURIComponent(token)}`));
     if (!res.ok) {
       saveToken("");
       sessionUser = "";
@@ -92,7 +93,7 @@ async function authRequest(
 ): Promise<void> {
   ui.setAccountError("");
   try {
-    const res = await fetch(path, {
+    const res = await fetch(apiUrl(path), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
@@ -247,7 +248,7 @@ ui.on({
   },
   logout: async () => {
     try {
-      await fetch("/api/logout", {
+      await fetch(apiUrl("/api/logout"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token }),
