@@ -40,6 +40,9 @@ const GK_HOLD_MIN = 0.45;
 const GK_HOLD_MAX = 2.4;
 const GK_PASS_RANGE = 230;
 const GK_PASS_SPEED = 400;
+/** Max time an outfield player can sit on the ball in their own box. */
+const OWN_BOX_HOLD_MAX = 1.1;
+const OWN_BOX_DRIBBLE_MUL = 0.45;
 const PENALTY_SHOT_TIME_MS = 8_000;
 const SLIDE_SPEED = 520;
 const SLIDE_DURATION = 0.32;
@@ -183,6 +186,8 @@ export class GameSim {
   private penSecretDiveX = 0;
   private penSecretDiveY = 0;
   private decidedByPens = false;
+  /** How long the current holder has been camping in their own box. */
+  private ownBoxHoldTimer = 0;
 
   constructor(left: { id: string; name: string }, right: { id: string; name: string }) {
     this.players = [
@@ -316,6 +321,7 @@ export class GameSim {
     this.handleKicks();
     this.tryAcquirePossession();
     this.applyPossessionBall();
+    this.enforceOwnBoxAntiCamp();
     this.updateKeepers();
     if (!this.possessionId && !this.keeperPossession) {
       this.resolveLooseBallPush();
@@ -400,8 +406,12 @@ export class GameSim {
       if (p.input.up) dy -= 1;
       if (p.input.down) dy += 1;
       const n = normalize(dx, dy);
-      const speed =
+      const baseSpeed =
         allowSpeed && this.possessionId === p.id ? DRIBBLE_SPEED : PLAYER_SPEED;
+      // Camping with the ball in your own box is slow — get it out
+      const inOwnBox =
+        this.possessionId === p.id && this.inKeeperBox(p.side, p.x, p.y);
+      const speed = inOwnBox ? baseSpeed * OWN_BOX_DRIBBLE_MUL : baseSpeed;
       p.vx = n.x * speed;
       p.vy = n.y * speed;
       // Facing always follows move direction when walking (slide uses this)
@@ -435,7 +445,19 @@ export class GameSim {
   private constrainPlayers(): void {
     for (const p of this.players) {
       p.y = clamp(p.y, PLAYER_RADIUS, PITCH_HEIGHT - PLAYER_RADIUS);
-      // Cannot enter the opponent's penalty box
+
+      const enemySide: Side = p.side === "left" ? "right" : "left";
+      // Enemy box is locked — unless the ball (or ball-holder) is camping there,
+      // so the attacker can contest instead of forever-shielding in the box.
+      const contestEnemyBox =
+        this.inKeeperBox(enemySide, this.ball.x, this.ball.y) ||
+        this.holderInBox(enemySide);
+
+      if (contestEnemyBox) {
+        p.x = clamp(p.x, PLAYER_RADIUS, PITCH_WIDTH - PLAYER_RADIUS);
+        continue;
+      }
+
       if (p.side === "left") {
         const maxX = PITCH_WIDTH - GK_BOX_DEPTH - PLAYER_RADIUS;
         p.x = clamp(p.x, PLAYER_RADIUS, maxX);
@@ -446,8 +468,16 @@ export class GameSim {
     }
   }
 
+  private holderInBox(side: Side): boolean {
+    if (!this.possessionId) return false;
+    const holder = this.players.find((p) => p.id === this.possessionId);
+    if (!holder) return false;
+    return this.inKeeperBox(side, holder.x, holder.y);
+  }
+
   private clearPossession(): void {
     this.possessionId = null;
+    this.ownBoxHoldTimer = 0;
   }
 
   private givePossession(playerId: string): void {
@@ -505,6 +535,43 @@ export class GameSim {
     this.ball.y = p.y + p.facingY * offset;
     this.ball.vx = p.vx;
     this.ball.vy = p.vy;
+  }
+
+  /** Stop forever-shielding in your own box where the foe couldn't reach. */
+  private enforceOwnBoxAntiCamp(): void {
+    if (!this.possessionId) {
+      this.ownBoxHoldTimer = 0;
+      return;
+    }
+    const p = this.players.find((pl) => pl.id === this.possessionId);
+    if (!p) {
+      this.ownBoxHoldTimer = 0;
+      return;
+    }
+
+    if (!this.inKeeperBox(p.side, p.x, p.y)) {
+      this.ownBoxHoldTimer = 0;
+      return;
+    }
+
+    this.ownBoxHoldTimer += TICK_DT;
+    if (this.ownBoxHoldTimer < OWN_BOX_HOLD_MAX) return;
+
+    // Forced clearance upfield — camping ends
+    const outward = p.side === "left" ? 1 : -1;
+    const clearY =
+      PITCH_HEIGHT / 2 + (Math.random() - 0.5) * 140;
+    const n = normalize(outward * 100, clearY - p.y);
+    this.ball.vx = n.x * 340;
+    this.ball.vy = n.y * 340;
+    this.ball.x = p.x + outward * (PLAYER_RADIUS + BALL_RADIUS + 8);
+    this.ball.y = p.y;
+    p.facingX = n.x;
+    p.facingY = n.y;
+    p.kickCooldown = 0.4;
+    this.clearPossession();
+    this.banner = "CLEAR IT!";
+    this.bannerTimer = 0.9;
   }
 
   private handleSlideTackles(): void {
