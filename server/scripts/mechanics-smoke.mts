@@ -305,9 +305,14 @@ function readySim() {
 // --- Mercy rule ends at +5 goals ---
 {
   const sim = readySim();
-  sim.score.left = 5;
+  sim.score.left = 4;
   sim.score.right = 0;
-  sim.step();
+  sim.ball.x = PITCH_WIDTH + 40;
+  sim.ball.y = PITCH_HEIGHT / 2;
+  sim.ball.vx = 200;
+  sim.ball.vy = 0;
+  for (let i = 0; i < 30; i++) sim.step();
+  assert(sim.score.left >= 5, "should reach 5 goals");
   assert(sim.finished, "5-goal lead should end the match");
   assert(sim.getWinner() === "left", "leader wins on mercy");
   console.log("OK mercy rule");
