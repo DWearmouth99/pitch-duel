@@ -4,22 +4,12 @@ export const PROD_SERVER_URL = "https://pitch-duel-mhcr.onrender.com";
 /**
  * Base URL for REST API calls.
  * - Dev: "" (Vite proxies /api → localhost:3001)
- * - Prod / preview: Render backend (or VITE_SERVER_URL override)
+ * - Otherwise: Render backend (or VITE_SERVER_URL override)
  */
 export function apiBase(): string {
-  const fromEnv = (import.meta.env.VITE_SERVER_URL as string | undefined)?.replace(
-    /\/$/,
-    ""
-  );
+  const fromEnv = import.meta.env.VITE_SERVER_URL?.replace(/\/$/, "");
   if (fromEnv) return fromEnv;
   if (import.meta.env.DEV) return "";
-  // Same-origin when the page is already served by the Render app
-  if (
-    typeof location !== "undefined" &&
-    location.hostname === "pitch-duel-mhcr.onrender.com"
-  ) {
-    return "";
-  }
   return PROD_SERVER_URL;
 }
 
