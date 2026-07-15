@@ -51,6 +51,8 @@ const SLIDE_COOLDOWN = 0.85;
 const SLIDE_RECOVER = 0.28;
 const EMOTE_DURATION = 1.6;
 const BANNER_DURATION = 1.8;
+/** Freeze after a goal before the next kickoff. */
+const GOAL_RESTART_MS = 3_000;
 
 const EMOTES: EmoteId[] = ["cheer", "fire", "shock", "gg"];
 
@@ -168,7 +170,6 @@ export class GameSim {
   tick: number;
   finished: boolean;
   phase: MatchPhase = "countdown";
-  resetCooldown = 0;
   possessionId: string | null = null;
   keeperPossession: Side | null = null;
   penalties: PenaltyState | null = null;
@@ -300,19 +301,6 @@ export class GameSim {
     }
 
     this.timeLeftMs = Math.max(0, this.timeLeftMs - TICK_DT * 1000);
-
-    if (this.resetCooldown > 0) {
-      this.resetCooldown -= TICK_DT;
-      this.updatePlayersMovement(false);
-      this.constrainPlayers();
-      this.updateKeepersIdle();
-      if (this.resetCooldown <= 0) {
-        this.ball.vx = 0;
-        this.ball.vy = 0;
-      }
-      this.checkMatchEnd();
-      return;
-    }
 
     this.tickCooldowns();
     this.updatePlayersMovement(true);
@@ -1022,6 +1010,7 @@ export class GameSim {
   private resetAfterGoal(): void {
     this.clearPossession();
     this.keeperPossession = null;
+    this.ownBoxHoldTimer = 0;
     this.ball = { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2, vx: 0, vy: 0 };
     for (const p of this.players) {
       p.x = p.side === "left" ? PITCH_WIDTH * 0.25 : PITCH_WIDTH * 0.75;
@@ -1047,19 +1036,23 @@ export class GameSim {
       k.holdTimer = 0;
       k.throwCooldown = 0;
     }
-    this.resetCooldown = 1.2;
-  }
 
-  private checkMatchEnd(): void {
-    if (this.phase !== "play") return;
-
-    // Mercy rule: 5-goal lead ends the match immediately
+    // Mercy ends the match immediately — no restart countdown
     if (Math.abs(this.score.left - this.score.right) >= 5) {
       this.finished = true;
       this.banner = "MERCY RULE!";
       this.bannerTimer = 1.6;
+      this.phase = "play";
       return;
     }
+
+    // 3s freeze with everyone reset, then kick off again
+    this.phase = "countdown";
+    this.countdownMs = GOAL_RESTART_MS;
+  }
+
+  private checkMatchEnd(): void {
+    if (this.phase !== "play") return;
 
     if (this.timeLeftMs > 0) return;
     if (this.score.left === this.score.right) {

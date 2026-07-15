@@ -94,11 +94,6 @@ export class AiController {
       return;
     }
 
-    if (sim.resetCooldown > 0) {
-      sim.setInput(this.playerId, emptyInput());
-      return;
-    }
-
     this.thinkCd -= 1 / 60;
     const reaction = 0.22 - this.skill * 0.17; // bronze ~0.22s, champ ~0.05s
     if (this.thinkCd <= 0) {

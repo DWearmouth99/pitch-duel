@@ -483,7 +483,7 @@ export class UI {
     if (opts?.phase === "countdown") {
       const sec = Math.max(1, Math.ceil((opts.countdownMs ?? 0) / 1000));
       timer.textContent = `Kickoff ${sec}`;
-      controls.innerHTML = `Hold position · match starts soon`;
+      controls.innerHTML = `Hold position · restarting play`;
       (
         this.root.querySelector("#match-hint") as HTMLElement
       ).textContent = "Movement locked until kickoff";

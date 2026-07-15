@@ -274,6 +274,34 @@ function readySim() {
   console.log("OK penalty standing save");
 }
 
+// --- After a goal: positions reset + 3s countdown ---
+{
+  const sim = readySim();
+  const left = sim.players[0];
+  left.x = 900;
+  left.y = 100;
+  sim.ball.x = PITCH_WIDTH + 40;
+  sim.ball.y = PITCH_HEIGHT / 2;
+  sim.ball.vx = 200;
+  sim.ball.vy = 0;
+  // Drive ball into right goal mouth
+  for (let i = 0; i < 30; i++) sim.step();
+  assert(sim.score.left >= 1, "should have scored");
+  assert(sim.phase === "countdown", "goal should start restart countdown");
+  assert(sim.countdownMs > 2500 && sim.countdownMs <= 3000, "restart should be ~3s");
+  assert(
+    Math.abs(sim.players[0].x - PITCH_WIDTH * 0.25) < 1,
+    "left player resets after goal"
+  );
+  assert(
+    Math.abs(sim.players[1].x - PITCH_WIDTH * 0.75) < 1,
+    "right player resets after goal"
+  );
+  for (let i = 0; i < 60 * 3 + 5; i++) sim.step();
+  assert(sim.phase === "play", "play resumes after 3s restart");
+  console.log("OK goal restart countdown");
+}
+
 // --- Mercy rule ends at +5 goals ---
 {
   const sim = readySim();
